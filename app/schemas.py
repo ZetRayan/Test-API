@@ -3,6 +3,10 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+# ==========================================
+# --- DEPARTMENTS ---
+# ==========================================
+
 class DepartmentCreate(BaseModel):
     """Схема для валидации входящего JSON при создании отдела"""
     name: str = Field(min_length=1, max_length=200)
@@ -32,6 +36,25 @@ class DepartmentTreeResponse(DepartmentResponse):
     children: list['DepartmentTreeResponse'] = []
     employees: Optional[list['EmployeeResponse']] = []
     
+    
+class DepartmentUpdate(BaseModel):
+    """Схема для валидации входящего JSON при обновлении отдела (PATCH)"""
+    name: Optional[str] = Field(None, min_length=1, max_length=200)
+    parent_id: Optional[int] = Field(None, description="ID нового родительского отдела. Передайте null, чтобы сделать отдел корневым.")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None:
+            stripped = value.strip()
+            if not stripped:
+                raise ValueError("Название подразделения не может состоять только из пробелов")
+            return stripped
+        return value
+
+# ==========================================
+# --- EMPLOYEES ---
+# ==========================================
 
 class EmployeeCreate(BaseModel):
     """Схема для валидации входящего JSON при найме сотрудника"""

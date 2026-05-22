@@ -239,3 +239,67 @@ def test_delete_employee_success():
 
     delete_again = client.delete(f"/employees/{emp_id}")
     assert delete_again.status_code == 404
+
+
+# ==========================================
+# --- Тесты: Обновление (PATCH) ---
+# ==========================================
+
+def test_update_department_name_success():
+    """Тест: Успешное переименование отдела"""
+    create_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
+    dept_id = create_res.json()["id"]
+    
+    new_name = generate_name()
+    response = client.patch(f"/departments/{dept_id}", json={"name": new_name})
+    
+    assert response.status_code == 200
+    assert response.json()["name"] == new_name
+
+
+def test_update_department_move_success():
+    """Тест: Успешное перемещение отдела к новому родителю"""
+    parent_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
+    parent_id = parent_res.json()["id"]
+    
+    child_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
+    child_id = child_res.json()["id"]
+    
+    response = client.patch(f"/departments/{child_id}", json={"parent_id": parent_id})
+    
+    assert response.status_code == 200
+    assert response.json()["parent_id"] == parent_id
+
+
+def test_update_department_name_conflict():
+    """Тест: Защита от одинаковых имен на одном уровне"""
+    parent_id = client.post("/departments/", json={"name": generate_name(), "parent_id": None}).json()["id"]
+    
+    name1 = generate_name()
+    client.post("/departments/", json={"name": name1, "parent_id": parent_id})
+    child2_id = client.post("/departments/", json={"name": generate_name(), "parent_id": parent_id}).json()["id"]
+    
+    response = client.patch(f"/departments/{child2_id}", json={"name": name1})
+    
+    assert response.status_code == 400
+
+
+def test_update_department_self_parent():
+    """Тест: Защита от назначения самого себя родителем"""
+    dept_id = client.post("/departments/", json={"name": generate_name(), "parent_id": None}).json()["id"]
+    
+    response = client.patch(f"/departments/{dept_id}", json={"parent_id": dept_id})
+    assert response.status_code == 400
+
+
+def test_update_department_cycle_protection():
+    """Тест: Защита от циклических зависимостей (Уроборос)"""
+    grandpa_id = client.post("/departments/", json={"name": generate_name(), "parent_id": None}).json()["id"]
+    father_id = client.post("/departments/", json={"name": generate_name(), "parent_id": grandpa_id}).json()["id"]
+    son_id = client.post("/departments/", json={"name": generate_name(), "parent_id": father_id}).json()["id"]
+    
+    response = client.patch(f"/departments/{grandpa_id}", json={"parent_id": son_id})
+    
+    assert response.status_code == 400
+    assert "циклическая зависимость" in response.json()["detail"].lower()
+

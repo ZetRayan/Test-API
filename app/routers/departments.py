@@ -4,7 +4,7 @@ from typing import Optional
 
 from app.database import get_db
 from app.models import Department, Employee
-from app.schemas import DepartmentCreate, DepartmentResponse, DepartmentTreeResponse, EmployeeCreate, EmployeeResponse
+from app.schemas import DepartmentCreate, DepartmentResponse, DepartmentTreeResponse, EmployeeCreate, EmployeeResponse, DepartmentUpdate
 
 
 router = APIRouter(prefix="/departments", tags=["Departments"])
@@ -116,6 +116,85 @@ def get_department(
         
     return tree
 
+
+@router.patch("/{dept_id}", response_model=DepartmentResponse)
+def update_department(dept_id: int, payload: DepartmentUpdate, db: Session = Depends(get_db)):
+    """
+    Обновляет данные отдела (переименование и/или перемещение).
+    Содержит защиту от образования циклических зависимостей в дереве.
+    """
+    dept = db.query(Department).filter(Department.id == dept_id).first()
+    if not dept:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Подразделение не найдено."
+        )
+
+    update_data = payload.model_dump(exclude_unset=True)
+
+    if not update_data:
+        return dept
+
+    # 1. Если меняют название, проверяем, нет ли уже такого имени на уровне текущего родителя
+    # (или на уровне нового родителя, если parent_id тоже меняется)
+    if "name" in update_data:
+        new_name = update_data["name"]
+        check_parent_id = update_data.get("parent_id", dept.parent_id)
+        
+        existing_dept = db.query(Department).filter(
+            Department.name == new_name,
+            Department.parent_id == check_parent_id,
+            Department.id != dept_id
+        ).first()
+        
+        if existing_dept:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Подразделение с таким именем уже существует на этом уровне."
+            )
+
+    # 2. Если меняют родителя, запускаем проверку на циклы
+    if "parent_id" in update_data:
+        new_parent_id = update_data["parent_id"]
+
+        if new_parent_id == dept_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Отдел не может быть родителем самому себе."
+            )
+
+        if new_parent_id is not None:
+            # Проверяем, существует ли вообще новый родитель
+            new_parent_dept = db.query(Department).filter(Department.id == new_parent_id).first()
+            if not new_parent_dept:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Указанный новый родительский отдел не найден."
+                )
+
+            # Алгоритм обхода вверх: идем от нового родителя к корню
+            current_check_id = new_parent_id
+            while current_check_id is not None:
+                if current_check_id == dept_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Нельзя переместить отдел внутрь его собственного подотдела (циклическая зависимость)."
+                    )
+                # Делаем запрос к БД, чтобы найти родителя текущего проверяемого узла
+                parent_node = db.query(Department.parent_id).filter(Department.id == current_check_id).first()
+                if not parent_node:
+                    break # Такого быть не должно из-за FK, но перестраховка не помешает
+                
+                current_check_id = parent_node.parent_id
+
+    # 3. Применяем изменения, если проверки пройдены
+    for key, value in update_data.items():
+        setattr(dept, key, value)
+
+    db.commit()
+    db.refresh(dept)
+    
+    return dept
 
 @router.delete("/{dept_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_department(dept_id: int, db: Session = Depends(get_db)):
