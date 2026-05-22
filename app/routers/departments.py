@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from typing import Literal,Optional
+from typing import Literal, Optional
 
 from app.database import get_db
 from app.models import Department, Employee
@@ -199,14 +199,14 @@ def update_department(dept_id: int, payload: DepartmentUpdate, db: Session = Dep
 @router.delete("/{dept_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_department(
     dept_id: int, 
-    mode: Literal["cascade", "reassign"] = Query("cascade", description="Режим удаления: cascade или reassign"),
-    reassign_to_department_id: Optional[int] = Query(None, description="ID отдела для перевода сотрудников (только для mode=reassign)"),
+    mode: Literal["cascade", "reassign"] = Query("cascade", description="Режим удаления: cascade (по умолчанию) или reassign"),
+    reassign_to_department_id: Optional[int] = Query(None, description="ID отдела, куда перевести сотрудников (только для mode=reassign)"),
     db: Session = Depends(get_db)
 ):
     """
-    Удаляет отдел.
+    Удаляет подразделение.
     Режимы (mode):
-    - cascade: удаляет отдел и все вложенные отделы с их сотрудниками (поведение БД по умолчанию).
+    - cascade: удаляет подразделение, все его подотделы и всех сотрудников (поведение БД по умолчанию).
     - reassign: переводит сотрудников удаляемого отдела в reassign_to_department_id перед удалением.
     """
     dept = db.query(Department).filter(Department.id == dept_id).first()
@@ -236,9 +236,22 @@ def delete_department(
                 detail="Запасной отдел (reassign_to_department_id) не найден."
             )
             
-        # Массово переводим сотрудников удаляемого отдела в новый отдел
-        db.query(Employee).filter(Employee.department_id == dept_id).update({"department_id": reassign_to_department_id})
+        current_check_id = target_dept.parent_id
+        while current_check_id: #type: ignore hint, цикл гарантированно закончится на None из-за FK
+            if current_check_id == dept_id: #type: ignore
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Нельзя перевести сотрудников во вложенный отдел удаляемого подразделения. Они будут уничтожены каскадным удалением."
+                )
+            parent_dept = db.query(Department).filter(Department.id == current_check_id).first()
+            current_check_id = parent_dept.parent_id if parent_dept else None
+            
+        db.query(Employee).filter(Employee.department_id == dept_id).update(
+            {"department_id": reassign_to_department_id}
+        )
+        db.commit()
 
     db.delete(dept)
     db.commit()
+
     return None

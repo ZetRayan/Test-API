@@ -1,3 +1,45 @@
+"""
+Тестовое покрытие API Организационной структуры.
+Используется изолированная база данных SQLite in-memory.
+
+Оглавление тестов:
+
+[ Подразделения: POST /departments/ ]
+* test_create_department_success — Успешное создание корневого отдела.
+* test_create_department_duplicate — Защита от дубликатов имен на одном уровне.
+* test_create_department_validation_error — Валидация Pydantic (пустые имена).
+
+[ Подразделения: GET /departments/ ]
+* test_get_all_departments — Получение плоского списка.
+* test_get_department_success — Получение конкретного отдела.
+* test_get_department_with_employees — Проверка вывода сотрудников и сортировки.
+* test_get_department_depth_limit — Проверка ограничения рекурсии (depth).
+* test_get_department_defaults — Проверка дефолтных параметров ТЗ.
+* test_get_department_max_depth_error — Защита от превышения глубины (depth > 5).
+* test_get_department_not_found — Ошибка 404.
+
+[ Подразделения: DELETE /departments/ ]
+* test_delete_department_cascade — Успешное каскадное удаление.
+* test_delete_department_reassign_success — Успешное удаление с эвакуацией сотрудников.
+* test_delete_department_reassign_missing_target — Ошибка при отсутствии запасного отдела.
+* test_delete_department_reassign_protection — Защита от каскадного уничтожения при эвакуации.
+* test_delete_department_not_found — Ошибка 404.
+
+[ Подразделения: PATCH /departments/ ]
+* test_update_department_name_success — Успешное переименование.
+* test_update_department_move_success — Успешное перемещение к новому родителю.
+* test_update_department_name_conflict — Защита от одинаковых имен при переименовании.
+* test_update_department_self_parent — Защита от назначения самого себя родителем.
+* test_update_department_cycle_protection — Защита от циклических зависимостей (Уроборос).
+
+[ Сотрудники: Employees ]
+* test_create_employee_success — Успешный найм.
+* test_create_employee_invalid_department — Найм в несуществующий отдел.
+* test_get_all_employees — Получение списка всех сотрудников.
+* test_delete_employee_success — Увольнение сотрудника.
+"""
+
+
 import pytest
 import uuid
 from fastapi.testclient import TestClient
@@ -219,12 +261,12 @@ def test_delete_department_cascade():
 
 
 def test_delete_department_reassign_success():
-    """Тест: Спасение сотрудников при удалении (режим reassign)"""
+    """Тест: Успешный перевод сотрудников в независимый отдел перед удалением."""
     doomed_id = client.post("/departments/", json={"name": generate_name(), "parent_id": None}).json()["id"]
     safe_id = client.post("/departments/", json={"name": generate_name(), "parent_id": None}).json()["id"]
     
     client.post(f"/departments/{doomed_id}/employees/", json={
-        "full_name": "Бессмертный Джо", "position": "Выживший"
+        "full_name": "Выживший Тестер", "position": "QA"
     })
     
     response = client.delete(f"/departments/{doomed_id}?mode=reassign&reassign_to_department_id={safe_id}")
@@ -234,7 +276,7 @@ def test_delete_department_reassign_success():
     safe_dept_res = client.get(f"/departments/{safe_id}?include_employees=true")
     data = safe_dept_res.json()
     assert len(data["employees"]) == 1
-    assert data["employees"][0]["full_name"] == "Бессмертный Джо"
+    assert data["employees"][0]["full_name"] == "Выживший Тестер"
     assert data["employees"][0]["department_id"] == safe_id
 
 
@@ -243,6 +285,20 @@ def test_delete_department_reassign_missing_target():
     doomed_id = client.post("/departments/", json={"name": generate_name(), "parent_id": None}).json()["id"]
     response = client.delete(f"/departments/{doomed_id}?mode=reassign")
     assert response.status_code == 400
+
+
+def test_delete_department_reassign_protection():
+    """Тест: Защита от перевода сотрудников в дочерний отдел удаляемого."""
+    res_parent = client.post("/departments/", json={"name": generate_name()})
+    parent_id = res_parent.json()["id"]
+
+    res_child = client.post("/departments/", json={"name": generate_name(), "parent_id": parent_id})
+    child_id = res_child.json()["id"]
+
+    res_delete = client.delete(f"/departments/{parent_id}?mode=reassign&reassign_to_department_id={child_id}")
+    
+    assert res_delete.status_code == 400
+    assert "Нельзя перевести сотрудников во вложенный отдел" in res_delete.json()["detail"]
 
 
 def test_delete_department_not_found():
