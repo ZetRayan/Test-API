@@ -70,8 +70,8 @@ def get_all_departments(db: Session = Depends(get_db)):
 @router.get("/{dept_id}", response_model=DepartmentTreeResponse)
 def get_department(
     dept_id: int, 
-    depth: int = Query(5, ge=1, description="Глубина вложенности дерева"), 
-    include_employees: bool = Query(False, description="Включать ли списки сотрудников"),
+    depth: int = Query(1, ge=1, le=5, description="Глубина вложенности дерева (по умолчанию 1, максимум 5)"), 
+    include_employees: bool = Query(True, description="Включать ли списки сотрудников (по умолчанию true)"),
     db: Session = Depends(get_db)
 ):
     """

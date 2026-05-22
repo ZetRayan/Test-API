@@ -127,7 +127,6 @@ def test_get_department_depth_limit():
     grandpa = client.post("/departments/", json={"name": generate_name(), "parent_id": None}).json()
     father = client.post("/departments/", json={"name": generate_name(), "parent_id": grandpa["id"]}).json()
     son = client.post("/departments/", json={"name": generate_name(), "parent_id": father["id"]}).json()
-    
 
     response = client.get(f"/departments/{grandpa['id']}?depth=2")
     assert response.status_code == 200
@@ -136,6 +135,32 @@ def test_get_department_depth_limit():
     assert len(data["children"]) == 1
     assert data["children"][0]["id"] == father["id"]
     assert len(data["children"][0]["children"]) == 0
+
+
+def test_get_department_defaults():
+    """Тест: Проверка строгого соответствия ТЗ (depth=1, include_employees=true по умолчанию)"""
+    parent_id = client.post("/departments/", json={"name": generate_name(), "parent_id": None}).json()["id"]
+    client.post("/departments/", json={"name": generate_name(), "parent_id": parent_id})
+    
+    client.post(f"/departments/{parent_id}/employees/", json={
+        "full_name": "Неизвестный Солдат", "position": "Снайпер"
+    })
+    
+    response = client.get(f"/departments/{parent_id}")
+    assert response.status_code == 200
+    data = response.json()
+    
+    assert len(data["employees"]) == 1
+    assert len(data["children"]) == 0
+
+
+def test_get_department_max_depth_error():
+    """Тест: Защита от превышения лимита глубины (depth > 5)"""
+    dept_id = client.post("/departments/", json={"name": generate_name(), "parent_id": None}).json()["id"]
+    
+    response = client.get(f"/departments/{dept_id}?depth=6")
+
+    assert response.status_code == 422
 
 
 def test_get_department_not_found():
