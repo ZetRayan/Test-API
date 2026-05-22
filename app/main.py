@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.routers import departments
+from app.routers import departments, employees
 
 
 app = FastAPI(
@@ -9,3 +9,4 @@ app = FastAPI(
 )
 
 app.include_router(departments.router)
+app.include_router(employees.router)

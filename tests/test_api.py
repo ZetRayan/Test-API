@@ -130,3 +130,73 @@ def test_delete_department_not_found():
     """Тест 8: Попытка удалить то, чего нет"""
     response = client.delete("/departments/99999999")
     assert response.status_code == 404
+    
+    
+# ==========================================
+# --- Тесты: Сотрудники (Employees) ---
+# ==========================================
+
+def test_create_employee_success():
+    """Успешный найм сотрудника"""
+    # Сначала создаем отдел, куда будем нанимать
+    dept_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
+    dept_id = dept_res.json()["id"]
+    
+    payload = {
+        "full_name": "Иван Иванов",
+        "position": "Разработчик",
+        "department_id": dept_id,
+        "hired_at": "2026-05-22"
+    }
+    response = client.post("/employees/", json=payload)
+    
+    assert response.status_code == 201
+    data = response.json()
+    assert data["full_name"] == "Иван Иванов"
+    assert data["department_id"] == dept_id
+    assert "id" in data
+
+def test_create_employee_invalid_department():
+    """Попытка нанять в несуществующий отдел"""
+    payload = {
+        "full_name": "Петр Петров",
+        "position": "Тестировщик",
+        "department_id": 99999999  # Такого отдела нет
+    }
+    response = client.post("/employees/", json=payload)
+    
+    assert response.status_code == 404
+
+def test_get_all_employees():
+    """Получение списка сотрудников"""
+    # Создаем базу: отдел + сотрудник
+    dept_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
+    client.post("/employees/", json={
+        "full_name": "Анна Смирнова",
+        "position": "Аналитик",
+        "department_id": dept_res.json()["id"]
+    })
+    
+    response = client.get("/employees/")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+    assert len(response.json()) > 0
+
+def test_delete_employee_success():
+    """Успешное увольнение"""
+    # Создаем базу: отдел + сотрудник (жертва)
+    dept_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
+    emp_res = client.post("/employees/", json={
+        "full_name": "Кандидат на вылет",
+        "position": "Стажер",
+        "department_id": dept_res.json()["id"]
+    })
+    emp_id = emp_res.json()["id"]
+    
+    # Увольняем
+    delete_res = client.delete(f"/employees/{emp_id}")
+    assert delete_res.status_code == 204
+    
+    # Пытаемся удалить повторно, чтобы убедиться, что записи больше нет
+    delete_again = client.delete(f"/employees/{emp_id}")
+    assert delete_again.status_code == 404
