@@ -28,15 +28,15 @@ class DepartmentResponse(BaseModel):
 
 
 class DepartmentTreeResponse(DepartmentResponse):
-    """Схема для отдачи отдела вместе с его подотделами (Рекурсия)"""
+    """Схема для отдачи отдела вместе с его подотделами и сотрудниками (Рекурсия)"""
     children: list['DepartmentTreeResponse'] = []
+    employees: Optional[list['EmployeeResponse']] = []
     
 
 class EmployeeCreate(BaseModel):
     """Схема для валидации входящего JSON при найме сотрудника"""
     full_name: str = Field(min_length=1, max_length=200)
     position: str = Field(min_length=1, max_length=200)
-    department_id: int
     hired_at: Optional[date] = None
 
     @field_validator("full_name", "position")

@@ -25,41 +25,36 @@ def generate_name():
 # --- Тесты для эндпоинта POST /departments/ ---
 # ==========================================
 
-
 def test_create_department_success():
-    """Тест 1: Успешное создание корневого отдела"""
+    """Тест: успешное создание корневого отдела"""
+    name = generate_name()
     payload = {
-        "name": UNIQUE_DEPT_NAME,
+        "name": name,
         "parent_id": None
     }
     response = client.post("/departments/", json=payload)
-    
-    # Проверяем статус-код (201 Created)
     assert response.status_code == 201
-    
-    # Проверяем, что в ответе вернулись правильные данные и база присвоила ID
     data = response.json()
-    assert data["name"] == UNIQUE_DEPT_NAME
+    assert data["name"] == name
     assert "id" in data
     assert data["parent_id"] is None
 
 
 def test_create_department_duplicate():
-    """Тест 2: Проверка защиты от дубликатов (бизнес-логика)"""
-    # Пытаемся создать отдел с тем же сгенерированным именем и тем же родителем
+    """Тест: проверка защиты от дубликатов (бизнес-логика)"""
+    name = generate_name()
     payload = {
-        "name": UNIQUE_DEPT_NAME,
+        "name": name,
         "parent_id": None
     }
+    client.post("/departments/", json=payload)
     response = client.post("/departments/", json=payload)
-    
-    # Наш код в router должен отбить это со статусом 400
     assert response.status_code == 400
     assert response.json()["detail"] == "Подразделение с таким именем уже существует на этом уровне."
 
 
 def test_create_department_validation_error():
-    """Тест 3: Проверка фейс-контроля Pydantic"""
+    """Тест: проверка валидации Pydantic для поля name"""
     # Отправляем имя из одних пробелов (наш кастомный валидатор должен это пресечь)
     payload = {
         "name": "   ",
@@ -80,30 +75,71 @@ def test_create_department_validation_error():
 # --- Тесты: Чтение (GET) ---
 # ==========================================
 
-
 def test_get_all_departments():
-    """Тест 4: Получение всех отделов (проверяем, что ответ - это список и что он не пустой)"""
+    """Тест: Получение плоского списка всех отделов"""
     client.post("/departments/", json={"name": generate_name(), "parent_id": None})
     response = client.get("/departments/")
+    
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
     assert len(data) > 0
 
+
 def test_get_department_success():
-    """Тест 5: Получение конкретного отдела (с проверкой наличия массива children)"""
+    """Тест: Получение конкретного отдела (базовое)"""
     create_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
     dept_id = create_res.json()["id"]
+    
     response = client.get(f"/departments/{dept_id}")
     assert response.status_code == 200
-    
     data = response.json()
+    
     assert data["id"] == dept_id
     assert "children" in data
     assert isinstance(data["children"], list)
 
+
+def test_get_department_with_employees():
+    """Тест: Проверка параметра include_employees=True и сортировки"""
+    dept_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
+    dept_id = dept_res.json()["id"]
+    
+    client.post(f"/departments/{dept_id}/employees/", json={
+        "full_name": "Яблоков Яков", "position": "Тестировщик"
+    })
+    client.post(f"/departments/{dept_id}/employees/", json={
+        "full_name": "Абрикосов Антон", "position": "Разработчик"
+    })
+    
+    response = client.get(f"/departments/{dept_id}?include_employees=true")
+    assert response.status_code == 200
+    data = response.json()
+    
+    assert "employees" in data
+    assert len(data["employees"]) == 2
+    assert data["employees"][0]["full_name"] == "Абрикосов Антон"
+    assert data["employees"][1]["full_name"] == "Яблоков Яков"
+
+
+def test_get_department_depth_limit():
+    """Тест: Проверка ограничения рекурсии (depth)"""
+    grandpa = client.post("/departments/", json={"name": generate_name(), "parent_id": None}).json()
+    father = client.post("/departments/", json={"name": generate_name(), "parent_id": grandpa["id"]}).json()
+    son = client.post("/departments/", json={"name": generate_name(), "parent_id": father["id"]}).json()
+    
+
+    response = client.get(f"/departments/{grandpa['id']}?depth=2")
+    assert response.status_code == 200
+    data = response.json()
+    
+    assert len(data["children"]) == 1
+    assert data["children"][0]["id"] == father["id"]
+    assert len(data["children"][0]["children"]) == 0
+
+
 def test_get_department_not_found():
-    """Тест 6: Попытка получить несуществующий отдел"""
+    """Тест: Попытка получить несуществующий отдел"""
     response = client.get("/departments/99999999")
     assert response.status_code == 404
 
@@ -113,21 +149,18 @@ def test_get_department_not_found():
 # ==========================================
 
 def test_delete_department_success():
-    """Тест 7: Успешное удаление отдела и проверка, что он действительно удален"""
-    # Создаем жертву
+    """Тест: успешное удаление отдела"""
     create_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
     target_id = create_res.json()["id"]
     
-    # Убиваем жертву
     delete_res = client.delete(f"/departments/{target_id}")
     assert delete_res.status_code == 204
     
-    # Проверяем, что отдел действительно удален, пытаясь его получить
     get_res = client.get(f"/departments/{target_id}")
     assert get_res.status_code == 404
 
 def test_delete_department_not_found():
-    """Тест 8: Попытка удалить то, чего нет"""
+    """Тест: удаление несуществующего отдела возвращает 404"""
     response = client.delete("/departments/99999999")
     assert response.status_code == 404
     
@@ -137,66 +170,72 @@ def test_delete_department_not_found():
 # ==========================================
 
 def test_create_employee_success():
-    """Успешный найм сотрудника"""
-    # Сначала создаем отдел, куда будем нанимать
+    """Тест: POST /departments/{dept_id}/employees/ — успешный найм сотрудника в существующий отдел"""
     dept_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
     dept_id = dept_res.json()["id"]
-    
+
     payload = {
         "full_name": "Иван Иванов",
         "position": "Разработчик",
-        "department_id": dept_id,
         "hired_at": "2026-05-22"
     }
-    response = client.post("/employees/", json=payload)
-    
+    response = client.post(f"/departments/{dept_id}/employees/", json=payload)
+
     assert response.status_code == 201
     data = response.json()
     assert data["full_name"] == "Иван Иванов"
+    assert data["position"] == "Разработчик"
     assert data["department_id"] == dept_id
     assert "id" in data
 
+
 def test_create_employee_invalid_department():
-    """Попытка нанять в несуществующий отдел"""
+    """Тест: POST /departments/{dept_id}/employees/ — 404 при найме в несуществующий отдел"""
     payload = {
         "full_name": "Петр Петров",
         "position": "Тестировщик",
-        "department_id": 99999999  # Такого отдела нет
+        "hired_at": "2026-05-22"
     }
-    response = client.post("/employees/", json=payload)
-    
+    response = client.post("/departments/99999999/employees/", json=payload)
+
     assert response.status_code == 404
 
+
 def test_get_all_employees():
-    """Получение списка сотрудников"""
-    # Создаем базу: отдел + сотрудник
+    """Тест: GET /employees/ — получение списка сотрудников"""
     dept_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
-    client.post("/employees/", json={
-        "full_name": "Анна Смирнова",
-        "position": "Аналитик",
-        "department_id": dept_res.json()["id"]
-    })
-    
+    dept_id = dept_res.json()["id"]
+
+    client.post(
+        f"/departments/{dept_id}/employees/",
+        json={
+            "full_name": "Анна Смирнова",
+            "position": "Аналитик",
+        }
+    )
+
     response = client.get("/employees/")
     assert response.status_code == 200
     assert isinstance(response.json(), list)
     assert len(response.json()) > 0
 
+
 def test_delete_employee_success():
-    """Успешное увольнение"""
-    # Создаем базу: отдел + сотрудник (жертва)
+    """Тест: DELETE /employees/{emp_id} — 204 при увольнении и 404 при повторном удалении"""
     dept_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
-    emp_res = client.post("/employees/", json={
-        "full_name": "Кандидат на вылет",
-        "position": "Стажер",
-        "department_id": dept_res.json()["id"]
-    })
+    dept_id = dept_res.json()["id"]
+
+    emp_res = client.post(
+        f"/departments/{dept_id}/employees/",
+        json={
+            "full_name": "Кандидат на вылет",
+            "position": "Стажер",
+        }
+    )
     emp_id = emp_res.json()["id"]
-    
-    # Увольняем
+
     delete_res = client.delete(f"/employees/{emp_id}")
     assert delete_res.status_code == 204
-    
-    # Пытаемся удалить повторно, чтобы убедиться, что записи больше нет
+
     delete_again = client.delete(f"/employees/{emp_id}")
     assert delete_again.status_code == 404
