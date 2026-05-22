@@ -1,9 +1,6 @@
-# --- Сеть и Валидация ---
 fastapi==0.111.0
 uvicorn==0.30.1
 pydantic==2.7.4
-
-# --- База Данных ---
 sqlalchemy==2.0.30
 alembic==1.13.1
 psycopg2-binary==2.9.9
