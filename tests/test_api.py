@@ -148,23 +148,50 @@ def test_get_department_not_found():
 # --- Тесты: Удаление (DELETE) ---
 # ==========================================
 
-def test_delete_department_success():
-    """Тест: успешное удаление отдела"""
+def test_delete_department_cascade():
+    """Тест: Успешное удаление отдела (режим cascade)"""
     create_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
     target_id = create_res.json()["id"]
     
-    delete_res = client.delete(f"/departments/{target_id}")
+    delete_res = client.delete(f"/departments/{target_id}?mode=cascade")
     assert delete_res.status_code == 204
     
     get_res = client.get(f"/departments/{target_id}")
     assert get_res.status_code == 404
 
+
+def test_delete_department_reassign_success():
+    """Тест: Спасение сотрудников при удалении (режим reassign)"""
+    doomed_id = client.post("/departments/", json={"name": generate_name(), "parent_id": None}).json()["id"]
+    safe_id = client.post("/departments/", json={"name": generate_name(), "parent_id": None}).json()["id"]
+    
+    client.post(f"/departments/{doomed_id}/employees/", json={
+        "full_name": "Бессмертный Джо", "position": "Выживший"
+    })
+    
+    response = client.delete(f"/departments/{doomed_id}?mode=reassign&reassign_to_department_id={safe_id}")
+    assert response.status_code == 204
+    assert client.get(f"/departments/{doomed_id}").status_code == 404
+    
+    safe_dept_res = client.get(f"/departments/{safe_id}?include_employees=true")
+    data = safe_dept_res.json()
+    assert len(data["employees"]) == 1
+    assert data["employees"][0]["full_name"] == "Бессмертный Джо"
+    assert data["employees"][0]["department_id"] == safe_id
+
+
+def test_delete_department_reassign_missing_target():
+    """Тест: Ошибка при reassign, если не передан ID запасного отдела"""
+    doomed_id = client.post("/departments/", json={"name": generate_name(), "parent_id": None}).json()["id"]
+    response = client.delete(f"/departments/{doomed_id}?mode=reassign")
+    assert response.status_code == 400
+
+
 def test_delete_department_not_found():
-    """Тест: удаление несуществующего отдела возвращает 404"""
+    """Тест: Попытка удалить несуществующий отдел"""
     response = client.delete("/departments/99999999")
     assert response.status_code == 404
-    
-    
+
 # ==========================================
 # --- Тесты: Сотрудники (Employees) ---
 # ==========================================
@@ -302,4 +329,5 @@ def test_update_department_cycle_protection():
     
     assert response.status_code == 400
     assert "циклическая зависимость" in response.json()["detail"].lower()
+
 

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from typing import Optional
+from typing import Literal,Optional
 
 from app.database import get_db
 from app.models import Department, Employee
@@ -197,15 +197,48 @@ def update_department(dept_id: int, payload: DepartmentUpdate, db: Session = Dep
     return dept
 
 @router.delete("/{dept_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_department(dept_id: int, db: Session = Depends(get_db)):
-    """Удаляет отдел."""
+def delete_department(
+    dept_id: int, 
+    mode: Literal["cascade", "reassign"] = Query("cascade", description="Режим удаления: cascade или reassign"),
+    reassign_to_department_id: Optional[int] = Query(None, description="ID отдела для перевода сотрудников (только для mode=reassign)"),
+    db: Session = Depends(get_db)
+):
+    """
+    Удаляет отдел.
+    Режимы (mode):
+    - cascade: удаляет отдел и все вложенные отделы с их сотрудниками (поведение БД по умолчанию).
+    - reassign: переводит сотрудников удаляемого отдела в reassign_to_department_id перед удалением.
+    """
     dept = db.query(Department).filter(Department.id == dept_id).first()
     if not dept:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Подразделение не найдено."
         )
-    
+
+    if mode == "reassign":
+        if reassign_to_department_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Для режима reassign необходимо указать параметр reassign_to_department_id."
+            )
+        
+        if reassign_to_department_id == dept_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Нельзя перевести сотрудников в удаляемый отдел."
+            )
+            
+        target_dept = db.query(Department).filter(Department.id == reassign_to_department_id).first()
+        if not target_dept:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Запасной отдел (reassign_to_department_id) не найден."
+            )
+            
+        # Массово переводим сотрудников удаляемого отдела в новый отдел
+        db.query(Employee).filter(Employee.department_id == dept_id).update({"department_id": reassign_to_department_id})
+
     db.delete(dept)
     db.commit()
     return None
