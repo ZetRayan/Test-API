@@ -18,9 +18,15 @@ class DepartmentCreate(BaseModel):
 
 
 class DepartmentResponse(BaseModel):
-    """Схема для красивой отдачи данных обратно пользователю"""
+    """Схема для отдачи базовой информации об отделе"""
     id: int
     name: str
     parent_id: Optional[int]
     created_at: datetime
+
     model_config = ConfigDict(from_attributes=True)
+
+
+class DepartmentTreeResponse(DepartmentResponse):
+    """Схема для отдачи отдела вместе с его подотделами (Рекурсия)"""
+    children: list['DepartmentTreeResponse'] = []

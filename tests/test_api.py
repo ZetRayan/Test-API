@@ -10,11 +10,16 @@ from app.main import app
 # TestClient берет наше FastAPI приложение и позволяет слать к нему HTTP-запросы напрямую.
 client = TestClient(app)
 
+
 # Генерируем уникальное имя для каждого запуска тестов. 
 # Мы стучимся в нашу основную БД, и чтобы тесты не падали из-за того, 
 # что отдел "Test" уже был создан вчерашним запуском, делаем имя случайным.
+
 UNIQUE_DEPT_NAME = f"Test_Dept_{uuid.uuid4().hex[:6]}"
 
+def generate_name():
+    """Генерирует уникальное имя, чтобы тесты не конфликтовали в базе"""
+    return f"Test_Dept_{uuid.uuid4().hex[:6]}"
 
 # ==========================================
 # --- Тесты для эндпоинта POST /departments/ ---
@@ -70,3 +75,58 @@ def test_create_department_validation_error():
     assert errors[0]["loc"] == ["body", "name"]
     assert "Название подразделения не может состоять только из пробелов" in errors[0]["msg"]
 
+
+# ==========================================
+# --- Тесты: Чтение (GET) ---
+# ==========================================
+
+
+def test_get_all_departments():
+    """Тест 4: Получение всех отделов (проверяем, что ответ - это список и что он не пустой)"""
+    client.post("/departments/", json={"name": generate_name(), "parent_id": None})
+    response = client.get("/departments/")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) > 0
+
+def test_get_department_success():
+    """Тест 5: Получение конкретного отдела (с проверкой наличия массива children)"""
+    create_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
+    dept_id = create_res.json()["id"]
+    response = client.get(f"/departments/{dept_id}")
+    assert response.status_code == 200
+    
+    data = response.json()
+    assert data["id"] == dept_id
+    assert "children" in data
+    assert isinstance(data["children"], list)
+
+def test_get_department_not_found():
+    """Тест 6: Попытка получить несуществующий отдел"""
+    response = client.get("/departments/99999999")
+    assert response.status_code == 404
+
+
+# ==========================================
+# --- Тесты: Удаление (DELETE) ---
+# ==========================================
+
+def test_delete_department_success():
+    """Тест 7: Успешное удаление отдела и проверка, что он действительно удален"""
+    # Создаем жертву
+    create_res = client.post("/departments/", json={"name": generate_name(), "parent_id": None})
+    target_id = create_res.json()["id"]
+    
+    # Убиваем жертву
+    delete_res = client.delete(f"/departments/{target_id}")
+    assert delete_res.status_code == 204
+    
+    # Проверяем, что отдел действительно удален, пытаясь его получить
+    get_res = client.get(f"/departments/{target_id}")
+    assert get_res.status_code == 404
+
+def test_delete_department_not_found():
+    """Тест 8: Попытка удалить то, чего нет"""
+    response = client.delete("/departments/99999999")
+    assert response.status_code == 404
