@@ -1,25 +1,58 @@
+import pytest
 import uuid
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, pool
+from sqlalchemy.orm import sessionmaker
 
 from app.main import app
+from app.database import get_db, Base
 
 # ==========================================
-# --- Настройка тестового клиента ---
+# --- Изолированная тестовая БД (SQLite in-memory) ---
 # ==========================================
+SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
 
-# TestClient берет наше FastAPI приложение и позволяет слать к нему HTTP-запросы напрямую.
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=pool.StaticPool,
+)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# ==========================================
+# --- Перехват зависимостей (Dependency Override) ---
+# ==========================================
+def override_get_db():
+    """Подменяет реальную базу (Postgres) на тестовую (SQLite)"""
+    db = TestingSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+app.dependency_overrides[get_db] = override_get_db
+# ==========================================
+# --- Вспомогательные функции ---
+# ==========================================
+def generate_name():
+    """Генерирует уникальное имя (оставляем для надежности)"""
+    return f"Test_Dept_{uuid.uuid4().hex[:6]}"
+
+# ==========================================
+# --- Настройка тестового клиента и фикстур ---
+# ==========================================
 client = TestClient(app)
 
-
-# Генерируем уникальное имя для каждого запуска тестов. 
-# Мы стучимся в нашу основную БД, и чтобы тесты не падали из-за того, 
-# что отдел "Test" уже был создан вчерашним запуском, делаем имя случайным.
-
-UNIQUE_DEPT_NAME = f"Test_Dept_{uuid.uuid4().hex[:6]}"
-
-def generate_name():
-    """Генерирует уникальное имя, чтобы тесты не конфликтовали в базе"""
-    return f"Test_Dept_{uuid.uuid4().hex[:6]}"
+@pytest.fixture(autouse=True)
+def setup_database():
+    """
+    Эта фикстура автоматически срабатывает перед КАЖДЫМ тестом.
+    Она создает чистые таблицы, а после завершения теста — сносит их.
+    """
+    Base.metadata.create_all(bind=engine)
+    yield
+    Base.metadata.drop_all(bind=engine)
+    
 
 # ==========================================
 # --- Тесты для эндпоинта POST /departments/ ---
